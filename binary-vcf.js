@@ -40,11 +40,11 @@
 //
 // With files[0] == vcf file
 //      files[1] == tabix file
-// 
+//
 // vcfR = new readBinaryVCF(files[1], files[0]);
 // var x = undefined;
-// vcfR.getRecords(1000000, 1015808, function(rs){x = rs;});
-// var chunks = vcfR.getChunks(1000000, 1015808)
+// vcfR.getRecords(11, 1000000, 1015808, function(rs){x = rs;});
+// var chunks = vcfR.getChunks(11, 1000000, 1015808)
 
 
 
@@ -294,6 +294,7 @@ function inflateBlock(f, blockOffset, cbfn) {
         return cbfn.call(this, resBuf);
     };
     var cb = function (blksize) {
+        //console.log(blockOffset, blksize);
         getChunk(f, blockOffset, blockOffset + blksize, cb2);
     };
     blockSize(f, blockOffset, cb);
@@ -405,10 +406,10 @@ function readBinaryFile(evt) {
 // reader.  Provides methods
 //
 //   * getIndex - builds the index information
-//   * bin2Ranges - returns the chunk information for a binid
+//   * bin2Ranges - returns the chunk information for a [ref binid]
 //   * bin2Beg - returns first chunk of bin
 //   * bin2End - returns last chunk of bin
-//   * getChunks - returns all chunks for bins covering region
+//   * getChunks - returns all chunks for bins covering region in ref
 //
 // Details below
 //
@@ -416,8 +417,8 @@ function readBinaryFile(evt) {
 // initializes a tabix reader and builds binary VCF reader.  Provides
 // methods
 //
-//   * getRecords - obtains the data records in a region and returns
-//     as a vector of strings to provided callback
+//   * getRecords - obtains the data records in a reference region and
+//                  returns as a vector of strings to provided callback
 //   * getChunks - returns all chunks covered by region
 //
 // Details below
@@ -458,23 +459,30 @@ readTabixFile.prototype.getIndex =
         inflateAllBlocks(
             this.theFile,
             function(resultBuffer) {
-                //console.log(tbxThis);
                 var parser =  new jParser(resultBuffer, tabi_fmt);
                 tbxThis.tabixContent = parser.parse('tabix');
-                tbxThis.bhash =
-                    bins2hash(tbxThis.tabixContent['indexseq'][0]['binseq']);
+                // Names to array of names
+                tbxThis.tabixContent.head.names =
+                    tbxThis.tabixContent.head.names.split('\0');
+                // Create bin xref hash table
+                var n_ref = tbxThis.tabixContent.head.n_ref;
+                tbxThis.bhash = {};
+                for (i = 0; i < n_ref; i++) {
+                    tbxThis.bhash[i] =
+                        bins2hash(tbxThis.tabixContent['indexseq'][i]['binseq']);
+                };
                 cbfn.call(tbxThis, tbxThis);
             });};
 
-// Takes a binid and builds a return vector mapped from the chunk
-// sequence of bin, where each element is a two element vector
+// Takes a ref and binid and builds a return vector mapped from the
+// chunk sequence of bin, where each element is a two element vector
 // defining the region of a chunk.  The begin and end of each region
 // are the base file offsets (the 16 bit right shifted values)
 readTabixFile.prototype.bin2Ranges =
-    function  (binid) {
+    function  (ref, binid) {
         var res = [];
         var bs = this.tabixContent.indexseq[0].binseq;
-        var cnkseq = bs[this.bhash[binid]].chunkseq;
+        var cnkseq = bs[this.bhash[ref][binid]].chunkseq;
 
         for (var i = 0; i < cnkseq.length; i++) {
             var cnk = cnkseq[i];
@@ -500,19 +508,19 @@ readTabixFile.prototype.bin2End =
         return range[range.length-1];
     };
 
-// For a region defined by BEG and END return the set of chunks of all
-// bins involved as a _flat_ vector of two element vectors, each
-// defining a region of a bin.
+// For a reference REF region defined by BEG and END return the set of
+// chunks of all bins involved as a _flat_ vector of two element
+// vectors, each defining a region of a bin.
 readTabixFile.prototype.getChunks =
-    function (beg, end) {
+    function (ref, beg, end) {
 
         var bids = reg2bins(beg, end+1).filter(
             function(x){
-                return (this.bhash[x] != undefined);
+                return (this.bhash[ref][x] != undefined);
             }, this);
         var bcnks = bids.map(
             function(x){
-                return this.bin2Ranges(x);
+                return this.bin2Ranges(ref, x);
             }, this);
         var cnks = bcnks.reduce(
             function(V, ranges) {
@@ -549,12 +557,12 @@ function readBinaryVCF (tbxFile, vcfFile) {
 // those in the range are kept.  The resulting filtered vector of
 // strings is returned by calling CBFN with the vector.
 readBinaryVCF.prototype.getRecords =
-    function (beg, end, cbfn) {
+    function (ref, beg, end, cbfn) {
         var vcfFile = this.theFile;
         var TbxR = this.tbxR;
 
         // vector.pop, pops from the _end_
-        var cnks = TbxR.getChunks(beg,end).reverse();
+        var cnks = TbxR.getChunks(ref,beg,end).reverse();
 
         var stg = "";
         var cb = function (x) {
@@ -580,9 +588,9 @@ readBinaryVCF.prototype.getRecords =
 
 // Synonym for tabix getChunks.  Directly callable on a vcfReader.
 readBinaryVCF.prototype.getChunks =
-    function (beg, end) {
+    function (ref, beg, end) {
         var TbxR = this.tbxR;
-        return TbxR.getChunks(beg, end);
+        return TbxR.getChunks(ref, beg, end);
     };
 
 
